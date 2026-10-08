@@ -11,7 +11,7 @@
 const char* WIFI_SSID = "SSID";
 const char* WIFI_PASSWORD = "PASSWORD";
 // red, orange, green. On a classic ESP32 avoid GPIO15 (strapping pin) and 16/17 on WROVER modules (PSRAM).
-const uint8_t PINS[] = {15, 16, 17};
+const uint8_t PINS[] = {25, 26, 33};
 const bool ACTIVE_LOW = false;  // true for relay boards that switch on LOW
 
 extern const char INDEX_HTML[] asm("_binary_src_index_html_start");  // embedded by board_build.embed_txtfiles
