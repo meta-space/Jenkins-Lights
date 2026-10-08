@@ -24,8 +24,12 @@ inline void collectJobs(JsonArrayConst jobs, std::vector<Job>& out) {
         if (j["jobs"].is<JsonArrayConst>()) {
             collectJobs(j["jobs"].as<JsonArrayConst>(), out);
         } else if (!color.empty()) {
-            out.push_back({j["fullName"] | "", color.find("_anime") != std::string::npos,
-                           j["lastCompletedBuild"]["result"] | "", j["lastCompletedBuild"]["number"] | 0L});
+            out.push_back({
+                j["fullName"] | "", 
+                color.find("_anime") != std::string::npos,
+                j["lastCompletedBuild"]["result"] | "", 
+                j["lastCompletedBuild"]["number"] | 0L
+            });
         }
     }
 }

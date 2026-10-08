@@ -4,7 +4,7 @@ ESP32 (Arduino, PlatformIO) traffic light for Jenkins builds. Behaviour mirrors 
 
 ## Commands
 
-- Build: `pio run` (default env `esp32r4`, ESP32-S3); classic ESP32: `pio run -e esp32dev`
+- Build: `pio run` (default env `esp32dev`, classic ESP32); ESP32-S3: `pio run -e esp32r4`
 - Upload / monitor: `pio run -t upload`, `pio device monitor`
 - Unit test (host): `pio test -e native`
 - On Windows use `C:\Users\fda\.platformio\penv\Scripts\platformio.exe` if `pio` is not in PATH.
