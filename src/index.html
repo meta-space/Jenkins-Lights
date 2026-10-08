@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Status</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 52rem; margin: 0 auto; padding: 1rem; }
+  .red { --c: #e53935; } .orange { --c: #fb8c00; } .green { --c: #43a047; }
+  .lamp { display: inline-flex; gap: .5rem; padding: .5rem; background: #222; border-radius: 2rem; vertical-align: middle; }
+  .lamp i { width: 2.5rem; height: 2.5rem; border-radius: 50%; background: #444; }
+  [data-light=red] i.red, [data-light=orange] i.orange, [data-light=green] i.green { background: var(--c); }
+  [data-light=error] i { animation: blink 1s step-end infinite; }
+  @keyframes blink { 50% { background: var(--c); } }
+  #info { margin-left: 1rem; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: .25rem .5rem; border-bottom: 1px solid #8884; }
+  td i { display: inline-block; width: .8em; height: .8em; border-radius: 50%; background: var(--c, #888); }
+  form { display: grid; gap: .5rem; max-width: 30rem; }
+  label { display: grid; } small, #saved { opacity: .7; }
+  input[type=search] { width: 100%; margin-bottom: .5rem; }
+  pre { max-height: 20rem; overflow: auto; font-size: .8rem; }
+</style>
+</head>
+<body>
+<h1>Build Status</h1>
+<div class="lamp" id="lamp"><i class="red"></i><i class="orange"></i><i class="green"></i></div>
+<span id="info">Loading…</span>
+<p><small>Orange: a watched job is building. Red: a watched job failed or is unstable.
+  Green: all watched jobs passed. Blinking: Jenkins or WiFi problem.</small></p>
+
+<h2>Jobs</h2>
+<input id="filter" type="search" placeholder="Filter jobs" aria-label="Filter jobs">
+<table><tbody id="jobs"></tbody></table>
+
+<h2>Settings</h2>
+<form id="settings">
+  <label>Jenkins URL <input name="url" type="url" required></label>
+  <label>User <input name="user" autocomplete="username"></label>
+  <label>API token <small>(Jenkins → your name → Security; changing the URL clears it)</small>
+    <input name="token" type="password" autocomplete="new-password"></label>
+  <label>Poll interval (seconds) <input name="poll" type="number" min="10" required></label>
+  <div><button>Save</button> <span id="saved"></span></div>
+</form>
+
+<h2>Lamp test</h2>
+<p id="test"><button value="auto">Automatic</button> <button value="red">Red</button>
+  <button value="orange">Orange</button> <button value="green">Green</button> <button value="off">All off</button></p>
+
+<details id="logbox"><summary>Device log</summary><pre id="log"></pre></details>
+
+<script>
+const $ = id => document.getElementById(id);
+const post = (url, data) => fetch(url, { method: 'POST', headers: { 'X-BuildStatus': '1' }, body: new URLSearchParams(data) });
+let state = { jobs: [], watched: [] };
+let jenkins = '';
+
+function colorOf(job) {
+  if (job.building) return 'orange';
+  if (job.result === 'FAILURE' || job.result === 'UNSTABLE') return 'red';
+  return job.result === 'SUCCESS' ? 'green' : '';
+}
+
+function render() {
+  const watched = new Set(state.watched), names = new Set(state.jobs.map(j => j.name));
+  // Watched jobs that no longer exist in Jenkins stay listed so they can be unwatched.
+  const missing = state.jobs.length ? state.watched.filter(n => !names.has(n)).map(name => ({ name, result: 'MISSING' })) : [];
+  const filter = $('filter').value.toLowerCase();
+  const rows = [...state.jobs, ...missing]
+    .filter(job => decodeURIComponent(job.name).toLowerCase().includes(filter))
+    .sort((a, b) => watched.has(b.name) - watched.has(a.name) || a.name.localeCompare(b.name))
+    .map(job => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td><input type="checkbox"></td><td><i></i> <a target="_blank"></a></td><td></td><td></td>';
+      const [box, dot, link] = tr.querySelectorAll('input, i, a');
+      box.checked = watched.has(job.name);
+      box.setAttribute('aria-label', 'Watch ' + decodeURIComponent(job.name));
+      box.onchange = () => post('/api/watch', { name: job.name, on: box.checked ? 1 : 0 }).then(refresh);
+      dot.className = colorOf(job);
+      link.textContent = decodeURIComponent(job.name);  // branch names arrive escaped, e.g. feature%2Ffoo
+      link.href = jenkins + '/job/' + job.name.split('/').map(encodeURIComponent).join('/job/');
+      tr.cells[2].textContent = job.building ? 'Building' : job.result || 'Not built';
+      tr.cells[3].textContent = job.number ? '#' + job.number : '';
+      return tr;
+    });
+  $('jobs').replaceChildren(...rows);
+}
+
+async function refresh() {
+  try {
+    state = await (await fetch('/api/status')).json();
+    $('lamp').dataset.light = state.light;
+    $('info').textContent = (state.manual ? 'Lamp test active. ' : '') +
+      (state.error ? 'Problem: ' + state.error : `Last poll ${state.age}s ago`);
+    render();
+    if ($('logbox').open) $('log').textContent = await (await fetch('/api/log')).text();
+  } catch {
+    $('lamp').dataset.light = 'error';
+    $('info').textContent = 'Device not reachable';
+  }
+}
+
+async function loadSettings() {
+  const c = await (await fetch('/api/config')).json(), f = $('settings');
+  jenkins = c.url;
+  f.url.value = c.url;
+  f.user.value = c.user;
+  f.poll.value = c.poll;
+  f.token.value = '';
+  f.token.placeholder = c.tokenSet ? 'unchanged' : 'not set';
+}
+
+$('settings').onsubmit = async e => {
+  e.preventDefault();
+  const res = await post('/api/config', new FormData(e.target));
+  $('saved').textContent = res.ok ? 'Saved' : await res.text();
+  await loadSettings();
+  refresh();
+};
+$('test').onclick = e => e.target.value && post('/api/light', { mode: e.target.value }).then(refresh);
+$('filter').oninput = render;
+$('logbox').ontoggle = refresh;
+loadSettings().then(refresh);
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
