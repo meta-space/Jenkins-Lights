@@ -4,13 +4,16 @@
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <esp_wifi.h>
 #include <mutex>
 #include "jenkins.h"
 
 // ---- Edit before uploading ----
 const char* WIFI_SSID = "SSID";
 const char* WIFI_PASSWORD = "PASSWORD";
-// red, orange, green. On a classic ESP32 avoid GPIO15 (strapping pin) and 16/17 on WROVER modules (PSRAM).
+const char* Jenkins = "http://10.0.0.1:8080";
+
+// red, orange, green = relays 1-3 of the classic ESP32 relay board (relay 4 is GPIO32, unused).
 const uint8_t PINS[] = {25, 26, 33};
 const bool ACTIVE_LOW = false;  // true for relay boards that switch on LOW
 
@@ -29,7 +32,7 @@ Settings cfg;
 std::set<std::string> watched;
 std::vector<Job> jobs;      // from the last successful poll
 String error = "Starting";  // non-empty: the monitor itself has a problem, so the lamps blink
-String manual;              // lamp test from the web UI: red, orange, green or off; empty = automatic
+String manual = "off";      // lamp test from the web UI: red, orange, green or off; empty = automatic
 uint32_t lastPoll;
 volatile bool pollNow = true;
 
@@ -134,10 +137,12 @@ void loop() {
         Lock g(mtx);
         state = lampState();
     }
-    if (state != shown) logf("Light: %s", state.c_str());
+    if (state != shown) {
+        logf("Light: %s", state.c_str());
+    }
     shown = state;
     setLamps(state, blinkOn = !blinkOn);
-    delay(500);
+    delay(state == "error" ? 3000 : 500);
 }
 
 // ---- Web UI and API ----
@@ -261,13 +266,27 @@ void setupWeb() {
     server.begin();
 }
 
+void reportMacAddress(){
+  uint8_t baseMac[6];
+  esp_err_t ret = esp_wifi_get_mac(WIFI_IF_STA, baseMac);
+  if (ret == ESP_OK) {
+    logf("MAC: %02x:%02x:%02x:%02x:%02x:%02x",
+                  baseMac[0], baseMac[1], baseMac[2],
+                  baseMac[3], baseMac[4], baseMac[5]);
+  } else {
+    logf("Failed to read MAC address");
+  }
+}
+
 void setup() {
     Serial.begin(115200);
-    for (uint8_t pin : PINS) pinMode(pin, OUTPUT);
+    for (uint8_t pin : PINS) {
+        pinMode(pin, OUTPUT);
+    }
     serialVprintf = esp_log_set_vprintf(captureIdfLog);
 
     prefs.begin("buildstatus");
-    cfg = {prefs.getString("url", "http://htkasrv084:8080"), prefs.getString("user"), prefs.getString("token"),
+    cfg = {prefs.getString("url", Jenkins), prefs.getString("user"), prefs.getString("token"),
            prefs.getUInt("poll", 30)};
     String w = prefs.getString("watched");
     for (int i = 0, j; (j = w.indexOf('\n', i)) >= 0; i = j + 1) watched.insert(w.substring(i, j).c_str());
@@ -275,9 +294,14 @@ void setup() {
     WiFi.onEvent([](arduino_event_id_t, arduino_event_info_t) {
         logf("WiFi connected: http://%s/ or http://buildstatus.local/", WiFi.localIP().toString().c_str());
         pollNow = true;
+        manual.clear();
     }, ARDUINO_EVENT_WIFI_STA_GOT_IP);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);  // reconnects automatically
+    reportMacAddress();
+    
     MDNS.begin("buildstatus");
+    manual = "orange";
     setupWeb();
+
     logf("Started, Jenkins %s, %u watched jobs", cfg.url.c_str(), watched.size());
 }
